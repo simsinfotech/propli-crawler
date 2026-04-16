@@ -45,6 +45,22 @@ export default function PropertyDetailPage() {
     load();
   }, [params.id]);
 
+  // If user landed here directly (shared link / typed URL / new tab), there's no
+  // browser history entry to go back to — swipe-back / browser-back would exit the
+  // dashboard. Inject /properties as the previous history entry so back returns
+  // the user to the listing instead of leaving the app.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const SESSION_KEY = "propli-nav-touched";
+    const isFirstLoadInSession = sessionStorage.getItem(SESSION_KEY) !== "1";
+    sessionStorage.setItem(SESSION_KEY, "1");
+    if (isFirstLoadInSession) {
+      const currentUrl = window.location.pathname + window.location.search;
+      window.history.replaceState(null, "", "/properties");
+      window.history.pushState(null, "", currentUrl);
+    }
+  }, []);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
