@@ -28,7 +28,11 @@ export async function getProperties(opts: {
     query = query.or(`name.ilike.%${search}%,builder_name.ilike.%${search}%,locality.ilike.%${search}%`);
   }
   if (propertyType) query = query.eq("property_type", propertyType);
-  if (status) query = query.eq("status", status);
+  if (status) {
+    // Match both "new launch" and "new_launch" variants
+    const variants = [status, status.replace(/_/g, " "), status.replace(/ /g, "_")];
+    query = query.in("status", Array.from(new Set(variants)));
+  }
   if (rera === "registered") query = query.eq("rera_status", "registered");
   if (rera === "not_registered") query = query.neq("rera_status", "registered");
   if (locality) query = query.eq("locality", locality);
@@ -148,6 +152,30 @@ export async function getDistinctBuilders(): Promise<string[]> {
   const set = new Set<string>();
   for (const row of data ?? []) {
     if (row.builder_name) set.add(row.builder_name);
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+export async function getDistinctStatuses(): Promise<string[]> {
+  const { data, error } = await supabase.from("properties").select("status");
+  if (error) throw error;
+
+  const set = new Set<string>();
+  for (const row of data ?? []) {
+    if (!row.status) continue;
+    // Normalize "new_launch" → "new launch" so duplicates collapse
+    set.add(row.status.replace(/_/g, " "));
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+export async function getDistinctPropertyTypes(): Promise<string[]> {
+  const { data, error } = await supabase.from("properties").select("property_type");
+  if (error) throw error;
+
+  const set = new Set<string>();
+  for (const row of data ?? []) {
+    if (row.property_type) set.add(row.property_type);
   }
   return Array.from(set).sort((a, b) => a.localeCompare(b));
 }

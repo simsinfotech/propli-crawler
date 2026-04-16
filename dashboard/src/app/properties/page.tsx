@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Search, ChevronLeft, ChevronRight } from "lucide-react";
 import DataTable, { type Column } from "@/components/ui/DataTable";
 import Badge from "@/components/ui/Badge";
-import { getProperties, getDistinctLocalities, getDistinctBuilders } from "@/lib/queries";
+import { getProperties, getDistinctLocalities, getDistinctBuilders, getDistinctStatuses, getDistinctPropertyTypes } from "@/lib/queries";
 import { formatPrice, formatDate } from "@/lib/formatters";
 import type { Property } from "@/lib/types";
 
@@ -49,6 +49,8 @@ function PropertiesPage() {
   const [count, setCount] = useState(0);
   const [localities, setLocalities] = useState<string[]>([]);
   const [builders, setBuilders] = useState<string[]>([]);
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [propertyTypes, setPropertyTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchInput, setSearchInput] = useState(search);
 
@@ -93,6 +95,8 @@ function PropertiesPage() {
   useEffect(() => {
     getDistinctLocalities().then(setLocalities);
     getDistinctBuilders().then(setBuilders);
+    getDistinctStatuses().then(setStatuses);
+    getDistinctPropertyTypes().then(setPropertyTypes);
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -209,16 +213,15 @@ function PropertiesPage() {
         <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-3">
           <select value={propertyType} onChange={(e) => updateParams({ type: e.target.value })} className={selectCls}>
             <option value="">All Types</option>
-            <option value="apartment">Apartment</option>
-            <option value="villa">Villa</option>
-            <option value="plot">Plot</option>
-            <option value="commercial">Commercial</option>
+            {propertyTypes.map((t) => (
+              <option key={t} value={t} className="capitalize">{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+            ))}
           </select>
           <select value={status} onChange={(e) => updateParams({ status: e.target.value })} className={selectCls}>
             <option value="">All Status</option>
-            <option value="active">Active</option>
-            <option value="upcoming">Upcoming</option>
-            <option value="completed">Completed</option>
+            {statuses.map((s) => (
+              <option key={s} value={s} className="capitalize">{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+            ))}
           </select>
           <select value={rera} onChange={(e) => updateParams({ rera: e.target.value })} className={selectCls}>
             <option value="">All RERA</option>
