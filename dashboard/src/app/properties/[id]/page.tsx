@@ -92,7 +92,7 @@ export default function PropertyDetailPage() {
   const malls = (entertainment?.malls || []) as PlaceResult[];
 
   return (
-    <div className="space-y-6 pt-4 lg:pt-0 pb-12">
+    <div className="space-y-4 sm:space-y-6 pt-2 lg:pt-0 pb-4 lg:pb-8">
       {/* Back button — go back if we have history within app, else navigate explicitly */}
       <button
         onClick={() => {
@@ -108,8 +108,8 @@ export default function PropertyDetailPage() {
       </button>
 
       {/* === Header Card === */}
-      <div className="rounded-xl border border-slate-200 bg-white p-6">
-        <div className="flex flex-col lg:flex-row lg:items-start gap-6">
+      <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
+        <div className="flex flex-col lg:flex-row lg:items-start gap-4 lg:gap-6">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-2">
               {property.builder_grade && (
@@ -123,7 +123,7 @@ export default function PropertyDetailPage() {
                 </span>
               )}
             </div>
-            <h1 className="text-2xl font-bold text-slate-900">{property.name}</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">{property.name}</h1>
             {property.builder_name && (
               <p className="text-sm text-slate-500 mt-1 flex items-center gap-1">
                 <Building2 className="h-3.5 w-3.5" /> {property.builder_name}
@@ -249,7 +249,7 @@ export default function PropertyDetailPage() {
 
       {/* === AI Buying Analysis === */}
       {analysis && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
           <h2 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
             <Brain className="h-4 w-4 text-violet-500" /> AI Buying Analysis
           </h2>
@@ -357,7 +357,7 @@ export default function PropertyDetailPage() {
 
       {/* === Buyer Scorecard === */}
       {analysis?.buyer_scorecard && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
           <h2 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
             <Brain className="h-4 w-4 text-emerald-500" /> Buyer Scorecard
           </h2>
@@ -398,9 +398,9 @@ export default function PropertyDetailPage() {
 
       {/* === Location & Commute === */}
       {hasIntelligence && (
-        <div className="grid lg:grid-cols-2 gap-6">
+        <div className="grid lg:grid-cols-2 gap-4 lg:gap-6">
           {/* Location Summary */}
-          <div className="rounded-xl border border-slate-200 bg-white p-6">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
             <h2 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
               <Navigation className="h-4 w-4 text-slate-400" /> Location Summary
             </h2>
@@ -458,7 +458,7 @@ export default function PropertyDetailPage() {
 
       {/* === AI Research === */}
       {research && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
           <h2 className="text-sm font-semibold text-slate-900 mb-4 flex items-center gap-2">
             <Brain className="h-4 w-4 text-slate-400" /> AI Project Research
           </h2>
@@ -523,7 +523,7 @@ export default function PropertyDetailPage() {
 
       {/* === Amenities === */}
       {property.amenities && property.amenities.length > 0 && (
-        <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <div className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
           <h2 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
             <Tag className="h-4 w-4 text-slate-400" /> Amenities
           </h2>
