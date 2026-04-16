@@ -9,16 +9,40 @@ import { generateAnalysis } from "./scoring.ts";
 
 const BATCH_LIMIT = 1; // Process 1 property per invocation to stay within timeout
 
-serve(async (_req: Request) => {
+serve(async (req: Request) => {
   const startTime = Date.now();
   console.log(`[intelligence] Starting pipeline at ${new Date().toISOString()}`);
+
+  // Optional: ?property_id=<uuid> to target a specific property (skips claim queue)
+  // Optional: ?mode=location_refresh to ONLY refresh nearby places (no images, no Google, no Claude)
+  const url = new URL(req.url);
+  const targetId = url.searchParams.get("property_id");
+  const mode = url.searchParams.get("mode") || "full";
+  const isLocationOnly = mode === "location_refresh";
 
   try {
     const supabase = getSupabaseClient();
 
-    // Fetch and claim a property using row locking to prevent duplicate processing
-    const { data: properties, error: fetchError } = await supabase
-      .rpc("claim_property_for_intelligence");
+    let properties: Record<string, unknown>[] | null = null;
+    let fetchError: { message?: string } | null = null;
+
+    if (targetId) {
+      const { data, error } = await supabase
+        .from("properties")
+        .select("*")
+        .eq("id", targetId)
+        .limit(1);
+      properties = data;
+      fetchError = error;
+    } else if (isLocationOnly) {
+      const { data, error } = await supabase.rpc("claim_property_for_location_refresh");
+      properties = data;
+      fetchError = error;
+    } else {
+      const { data, error } = await supabase.rpc("claim_property_for_intelligence");
+      properties = data;
+      fetchError = error;
+    }
 
     if (fetchError) throw new Error(`DB fetch failed: ${fetchError.message || JSON.stringify(fetchError)}`);
 
@@ -34,7 +58,7 @@ serve(async (_req: Request) => {
 
     for (const property of properties) {
       try {
-        console.log(`\n[intelligence] Processing: ${property.name}`);
+        console.log(`\n[intelligence] Processing: ${property.name} (mode=${mode})`);
 
         // Step 1: Geocode if needed (Nominatim — FREE)
         let lat = property.latitude;
@@ -57,6 +81,60 @@ serve(async (_req: Request) => {
             results.push({ property: property.name, status: "error", error: "Geocoding failed" });
             continue;
           }
+        }
+
+        // ===== LOCATION-ONLY MODE: refresh nearby places, preserve everything else =====
+        if (isLocationOnly) {
+          console.log("  [location_refresh] Fetching Overpass + commutes only...");
+          const [nearbyPlaces, commutes] = await Promise.all([
+            fetchNearbyPlaces(lat, lng).catch((e) => {
+              console.error(`  [location] Error:`, (e as Error).message);
+              return {} as Record<string, unknown[]>;
+            }),
+            calculateCommutes(lat, lng).catch((e) => {
+              console.error(`  [commutes] Error:`, (e as Error).message);
+              return {} as Record<string, { distance_km: number; drive_time_min: number; traffic_time_min: number }>;
+            }),
+          ]);
+
+          const schoolsCount = (nearbyPlaces.schools as unknown[])?.length || 0;
+          const hospitalsCount = (nearbyPlaces.hospitals as unknown[])?.length || 0;
+          const metroCount = (nearbyPlaces.metro_stations as unknown[])?.length || 0;
+
+          // Only update location fields — DO NOT touch ai_buying_analysis, location_score,
+          // builder_grade, images_scraped, ai_project_research
+          const { error: updateError } = await supabase
+            .from("properties")
+            .update({
+              location_intelligence: nearbyPlaces,
+              commute_data: commutes,
+              nearby_schools: nearbyPlaces.schools || [],
+              nearby_hospitals: nearbyPlaces.hospitals || [],
+              nearby_metro: nearbyPlaces.metro_stations || [],
+              nearby_entertainment: {
+                malls: nearbyPlaces.shopping_malls || [],
+                restaurants: nearbyPlaces.restaurants || [],
+                cafes: nearbyPlaces.cafes || [],
+                cinema: nearbyPlaces.cinema || [],
+                parks: nearbyPlaces.parks || [],
+              },
+              location_refresh_at: new Date().toISOString(),
+            })
+            .eq("id", property.id);
+
+          if (updateError) {
+            results.push({ property: property.name, status: "error", error: updateError.message });
+          } else {
+            results.push({
+              property: property.name,
+              status: "success",
+              mode: "location_refresh",
+              schools: schoolsCount,
+              hospitals: hospitalsCount,
+              metro: metroCount,
+            });
+          }
+          continue; // Skip the full-pipeline path
         }
 
         // Steps 2-5: Run ALL data collection in PARALLEL to save time
@@ -103,6 +181,7 @@ serve(async (_req: Request) => {
         console.log(`  Data collection done in ${dataTime}s. Running AI analysis...`);
 
         // Step 6: AI analysis (Claude Haiku — only paid service)
+        let analysisError: string | null = null;
         const analysis = await generateAnalysis(
           {
             name: property.name,
@@ -119,7 +198,8 @@ serve(async (_req: Request) => {
           googleResults as { query: string; snippets: string[] }[],
           null
         ).catch((e) => {
-          console.error(`  [analysis] Error:`, (e as Error).message);
+          analysisError = (e as Error).message;
+          console.error(`  [analysis] Error:`, analysisError);
           return null;
         });
 
@@ -181,6 +261,8 @@ serve(async (_req: Request) => {
             location_score: analysis?.location_score?.overall,
             schools_found: (nearbyPlaces.schools as unknown[])?.length || 0,
             hospitals_found: (nearbyPlaces.hospitals as unknown[])?.length || 0,
+            analysis_error: analysisError,
+            has_scorecard: !!analysis?.buyer_scorecard,
           });
         }
       } catch (e) {

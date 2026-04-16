@@ -82,59 +82,143 @@ export async function geocodeProperty(
   return null;
 }
 
+// --- Overpass mirror endpoints — failover on rate limits ---
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+];
+
+async function overpassFetch(query: string, attempt = 0): Promise<{ elements: unknown[] } | null> {
+  // Rotate through mirrors to dodge rate limits
+  const endpoint = OVERPASS_ENDPOINTS[attempt % OVERPASS_ENDPOINTS.length];
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `data=${encodeURIComponent(query)}`,
+    });
+
+    if (response.status === 429 || response.status === 504 || response.status >= 500) {
+      if (attempt < 5) {
+        const backoff = 800 + 400 * attempt;
+        console.log(`  [overpass] ${endpoint.split("/")[2]} HTTP ${response.status}, retrying in ${backoff}ms (attempt ${attempt + 1})`);
+        await new Promise((r) => setTimeout(r, backoff));
+        return overpassFetch(query, attempt + 1);
+      }
+      console.error(`  [overpass] All retries exhausted: HTTP ${response.status}`);
+      return null;
+    }
+
+    if (!response.ok) {
+      console.error(`  [overpass] ${endpoint.split("/")[2]} HTTP ${response.status}`);
+      return null;
+    }
+
+    return await response.json();
+  } catch (e) {
+    if (attempt < 5) {
+      console.log(`  [overpass] Network error on ${endpoint.split("/")[2]}, retrying:`, (e as Error).message);
+      await new Promise((r) => setTimeout(r, 800 + 400 * attempt));
+      return overpassFetch(query, attempt + 1);
+    }
+    console.error(`  [overpass] Final failure:`, (e as Error).message);
+    return null;
+  }
+}
+
+// Tag matchers — given an OSM element's tags, return which category it belongs to (or null)
+function categorize(tags: Record<string, string>): string | null {
+  const a = tags.amenity;
+  const r = tags.railway;
+  const h = tags.highway;
+  const s = tags.shop;
+  const l = tags.leisure;
+
+  if (a === "school" || a === "kindergarten") return "schools";
+  if (a === "university" || a === "college") return "colleges";
+  if (a === "hospital" || a === "clinic") return "hospitals";
+  if (a === "pharmacy") return "pharmacies";
+  if (r === "station") return "metro_stations";
+  if (h === "bus_stop") return "bus_stops";
+  if (s === "mall") return "shopping_malls";
+  if (s === "supermarket") return "supermarkets";
+  if (a === "restaurant") return "restaurants";
+  if (a === "cafe") return "cafes";
+  if (a === "cinema") return "cinema";
+  if (l === "park") return "parks";
+  if (l === "fitness_centre") return "gyms";
+  if (a === "bank") return "banks";
+  if (a === "atm") return "atms";
+  return null;
+}
+
 // --- Nearby Places via Overpass API (FREE) ---
+// Single combined query returns all categories at once — much faster, fewer rate-limit hits.
 export async function fetchNearbyPlaces(
   lat: number, lng: number
 ): Promise<Record<string, unknown[]>> {
   const results: Record<string, unknown[]> = {};
+  // Initialize all categories so consumers can rely on keys existing
+  for (const cat of OVERPASS_CATEGORIES) results[cat.key] = [];
 
+  // Build a single union query — use the largest radius (5km) to capture everything.
+  // We'll filter per-category by their own radius client-side.
+  const r = 5000;
+  const queries = [
+    `node["amenity"~"^(school|kindergarten|university|college|hospital|clinic|pharmacy|restaurant|cafe|cinema|bank|atm)$"](around:${r},${lat},${lng});`,
+    `way["amenity"~"^(school|kindergarten|university|college|hospital|clinic|restaurant|cinema|bank)$"](around:${r},${lat},${lng});`,
+    `node["railway"="station"](around:${r},${lat},${lng});`,
+    `way["railway"="station"](around:${r},${lat},${lng});`,
+    `node["highway"="bus_stop"](around:2000,${lat},${lng});`,
+    `node["shop"~"^(mall|supermarket)$"](around:${r},${lat},${lng});`,
+    `way["shop"~"^(mall|supermarket)$"](around:${r},${lat},${lng});`,
+    `node["leisure"~"^(park|fitness_centre)$"](around:3000,${lat},${lng});`,
+    `way["leisure"~"^(park|fitness_centre)$"](around:3000,${lat},${lng});`,
+  ];
+
+  const query = `[out:json][timeout:25];(${queries.join("\n")});out center tags;`;
+
+  const data = await overpassFetch(query);
+  if (!data) {
+    console.log(`  [overpass] No data returned, all categories empty`);
+    return results;
+  }
+
+  // Group by category
+  const buckets: Record<string, Array<{ name: string | null; distance_km: number; lat: number; lng: number; operator: string | null; website: string | null }>> = {};
+
+  for (const el of (data.elements || [])) {
+    const e = el as { lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> };
+    const tags = e.tags || {};
+    const cat = categorize(tags);
+    if (!cat) continue;
+
+    const elLat = e.lat || e.center?.lat;
+    const elLng = e.lon || e.center?.lon;
+    if (!elLat || !elLng) continue;
+
+    const dist = haversineDistance(lat, lng, elLat, elLng);
+    // Apply per-category radius filter
+    const catCfg = OVERPASS_CATEGORIES.find((c) => c.key === cat);
+    if (catCfg && dist * 1000 > catCfg.radius) continue;
+
+    if (!buckets[cat]) buckets[cat] = [];
+    buckets[cat].push({
+      name: tags.name || tags["name:en"] || null,
+      distance_km: dist,
+      lat: elLat,
+      lng: elLng,
+      operator: tags.operator || null,
+      website: tags.website || null,
+    });
+  }
+
+  // Sort by distance and apply max per category
   for (const cat of OVERPASS_CATEGORIES) {
-    try {
-      const tagQueries = cat.osm_tags.map(tag =>
-        `node[${tag}](around:${cat.radius},${lat},${lng});way[${tag}](around:${cat.radius},${lat},${lng});`
-      ).join("\n");
-      const query = `[out:json][timeout:10];(${tagQueries});out center body ${cat.max * 2};`;
-
-      const response = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `data=${encodeURIComponent(query)}`,
-      });
-
-      if (!response.ok) {
-        console.error(`  [location] Overpass ${cat.key}: HTTP ${response.status}`);
-        results[cat.key] = [];
-        continue;
-      }
-
-      const data = await response.json();
-
-      const places = (data.elements || [])
-        .map((el: { lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: Record<string, string> }) => {
-          const elLat = el.lat || el.center?.lat;
-          const elLng = el.lon || el.center?.lon;
-          if (!elLat || !elLng) return null;
-          return {
-            name: el.tags?.name || el.tags?.["name:en"] || null,
-            distance_km: haversineDistance(lat, lng, elLat, elLng),
-            lat: elLat,
-            lng: elLng,
-            operator: el.tags?.operator || null,
-            website: el.tags?.website || null,
-          };
-        })
-        .filter((p: { name: string | null } | null) => p !== null)
-        .sort((a: { distance_km: number }, b: { distance_km: number }) => a.distance_km - b.distance_km)
-        .slice(0, cat.max);
-
-      results[cat.key] = places;
-    } catch (e) {
-      console.error(`  [location] Overpass failed for ${cat.key}:`, (e as Error).message);
-      results[cat.key] = [];
-    }
-
-    // Respect rate limit (reduced for speed)
-    await new Promise((r) => setTimeout(r, 400));
+    const items = buckets[cat.key] || [];
+    items.sort((a, b) => a.distance_km - b.distance_km);
+    results[cat.key] = items.slice(0, cat.max);
   }
 
   // Airport distance (fixed point — no API needed)
