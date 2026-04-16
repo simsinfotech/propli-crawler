@@ -84,7 +84,9 @@ function PropertiesPage() {
       params.delete("page");
     }
     const qs = params.toString();
-    router.push(`/properties${qs ? `?${qs}` : ""}`, { scroll: false });
+    // Use replace (not push) so filter changes don't pollute browser history.
+    // Otherwise the back button cycles through every keystroke / dropdown change.
+    router.replace(`/properties${qs ? `?${qs}` : ""}`, { scroll: false });
   }, [searchParams, router]);
 
   const setPage = useCallback((p: number | ((prev: number) => number)) => {

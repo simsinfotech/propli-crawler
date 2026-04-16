@@ -77,9 +77,15 @@ export default function PropertyDetailPage() {
 
   return (
     <div className="space-y-6 pt-4 lg:pt-0 pb-12">
-      {/* Back button */}
+      {/* Back button — go back if we have history within app, else navigate explicitly */}
       <button
-        onClick={() => router.back()}
+        onClick={() => {
+          if (typeof window !== "undefined" && window.history.length > 1 && document.referrer.includes(window.location.host)) {
+            router.back();
+          } else {
+            router.push("/properties");
+          }
+        }}
         className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900 transition-colors"
       >
         <ArrowLeft className="h-4 w-4" /> Back to Properties
