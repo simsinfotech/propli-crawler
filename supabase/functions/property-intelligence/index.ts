@@ -101,6 +101,25 @@ serve(async (req: Request) => {
           const hospitalsCount = (nearbyPlaces.hospitals as unknown[])?.length || 0;
           const metroCount = (nearbyPlaces.metro_stations as unknown[])?.length || 0;
 
+          // Detect Overpass total failure: if ALL major categories empty, treat as failed and
+          // do NOT mark refresh complete — leave location_refresh_at NULL so it gets retried.
+          const totalCategories = Object.keys(nearbyPlaces).filter((k) => k !== "airport").length;
+          const totalItems = Object.entries(nearbyPlaces)
+            .filter(([k]) => k !== "airport")
+            .reduce((sum, [, v]) => sum + ((v as unknown[])?.length || 0), 0);
+          const overpassFailed = totalCategories === 0 || totalItems === 0;
+
+          if (overpassFailed) {
+            console.log(`  [location_refresh] Overpass returned 0 items across all categories — treating as transient failure, will retry`);
+            results.push({
+              property: property.name,
+              status: "error",
+              mode: "location_refresh",
+              error: "Overpass returned no data (transient — will retry)",
+            });
+            continue;
+          }
+
           // Only update location fields — DO NOT touch ai_buying_analysis, location_score,
           // builder_grade, images_scraped, ai_project_research
           const { error: updateError } = await supabase
